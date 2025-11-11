@@ -17,6 +17,10 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import easyocr
 from ultralytics import YOLO
+import time
+
+# Import GTSRB classes for sign classification
+from gtsrb_classes import GTSRB_CLASSES, get_sign_meaning, get_sign_category
 
 # Page config
 st.set_page_config(
@@ -50,20 +54,27 @@ def load_models():
     """Load YOLO and OCR models"""
     with st.spinner("🤖 Loading AI models... This may take 1-2 minutes on first run."):
         try:
-            # Load YOLO model
-            detector = YOLO('yolov8n.pt')
-            st.success("✅ YOLO model loaded!")
+            # Try to load your custom trained YOLO model first
+            try:
+                detector = YOLO('best.pt')  # Your trained GTSRB model
+                st.success("✅ Custom GTSRB YOLO model loaded!")
+                model_type = "custom"
+            except:
+                # Fallback to generic YOLO if custom model not found
+                detector = YOLO('yolov8n.pt')
+                st.warning("⚠️ Using generic YOLO - Upload your trained 'best.pt' for sign classification")
+                model_type = "generic"
             
             # Load OCR model (CPU only for Streamlit Cloud)
             ocr_reader = easyocr.Reader(['en', 'de'], gpu=False)
             st.success("✅ OCR model loaded!")
             
-            return detector, ocr_reader
+            return detector, ocr_reader, model_type
             
         except Exception as e:
             st.error(f"❌ Error loading models: {str(e)}")
             st.error("Please try refreshing the page or contact support.")
-            return None, None
+            return None, None, None
 
 def preprocess_for_ocr(image):
     """Enhanced preprocessing for better OCR (without cv2)"""
@@ -95,12 +106,11 @@ def preprocess_for_ocr(image):
     except Exception:
         return image
 
-def process_uploaded_image(uploaded_file, detector, ocr_reader, confidence_threshold):
+def process_uploaded_image(uploaded_file, detector, ocr_reader, confidence_threshold, model_type):
     """Process uploaded image through AI pipeline"""
-    results = {'detections': [], 'processing_time': 0}
+    results = {'detections': [], 'processing_time': 0, 'model_type': model_type}
     
     try:
-        import time
         start_time = time.time()
         
         # Load image
@@ -118,6 +128,20 @@ def process_uploaded_image(uploaded_file, detector, ocr_reader, confidence_thres
                     # Extract box coordinates
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     confidence = float(box.conf[0])
+                    
+                    # Get class ID and sign classification
+                    class_id = int(box.cls[0]) if box.cls is not None else -1
+                    
+                    # Determine sign meaning based on model type
+                    if model_type == "custom":
+                        # Use GTSRB classification for trained model
+                        sign_meaning = get_sign_meaning(class_id)
+                        sign_category = get_sign_category(class_id)
+                    else:
+                        # Generic YOLO classes
+                        generic_classes = {0: 'person', 1: 'bicycle', 2: 'car', 9: 'traffic light', 11: 'stop sign'}
+                        sign_meaning = generic_classes.get(class_id, f"Object (class {class_id})")
+                        sign_category = "🔍 Generic Detection"
                     
                     # Extract ROI for OCR
                     roi = image_np[y1:y2, x1:x2]
@@ -155,6 +179,9 @@ def process_uploaded_image(uploaded_file, detector, ocr_reader, confidence_thres
                     results['detections'].append({
                         'bbox': [x1, y1, x2, y2],
                         'confidence': float(confidence),
+                        'class_id': class_id,
+                        'sign_meaning': sign_meaning,
+                        'sign_category': sign_category,
                         'ocr_results': ocr_results
                     })
         
@@ -167,7 +194,7 @@ def process_uploaded_image(uploaded_file, detector, ocr_reader, confidence_thres
 
 def create_visualization(image, results):
     """Create detection visualization with matplotlib"""
-    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+    fig, ax = plt.subplots(1, 1, figsize=(14, 10))
     
     # Display image
     ax.imshow(image)
@@ -179,6 +206,8 @@ def create_visualization(image, results):
     for i, detection in enumerate(results['detections']):
         x1, y1, x2, y2 = detection['bbox']
         confidence = detection['confidence']
+        sign_meaning = detection.get('sign_meaning', 'Unknown')
+        sign_category = detection.get('sign_category', '🔍 Detection')
         color = colors[i % len(colors)]
         
         # Draw bounding box
@@ -186,18 +215,26 @@ def create_visualization(image, results):
                            fill=False, color=color, linewidth=3)
         ax.add_patch(rect)
         
-        # Prepare text annotation
+        # Prepare enhanced text annotation
         ocr_texts = [r['text'] for r in detection['ocr_results'][:2]]
-        annotation = f"Sign {i+1}\\nConf: {confidence:.2f}"
+        
+        # Create comprehensive annotation
+        if results.get('model_type') == 'custom':
+            annotation = f"{sign_category}\\n{sign_meaning}\\nConf: {confidence:.2f}"
+        else:
+            annotation = f"{sign_meaning}\\nConf: {confidence:.2f}"
+            
         if ocr_texts:
             annotation += f"\\nText: {', '.join(ocr_texts)}"
         
         # Add text with background
-        ax.text(x1, y1-10, annotation, 
-                bbox=dict(facecolor='white', alpha=0.9, edgecolor=color),
-                fontsize=10, fontweight='bold', verticalalignment='top')
+        ax.text(x1, y1-15, annotation, 
+                bbox=dict(facecolor='white', alpha=0.95, edgecolor=color, pad=5),
+                fontsize=9, fontweight='bold', verticalalignment='top')
     
-    ax.set_title(f"🎯 AI Detection Results: {len(results['detections'])} Traffic Signs Found", 
+    # Enhanced title
+    model_status = "🎯 GTSRB Trained Model" if results.get('model_type') == 'custom' else "⚠️ Generic YOLO"
+    ax.set_title(f"{model_status}: {len(results['detections'])} Signs Detected", 
                 fontsize=16, fontweight='bold')
     ax.axis('off')
     
@@ -218,7 +255,7 @@ def main():
     """, unsafe_allow_html=True)
     
     # Load models
-    detector, ocr_reader = load_models()
+    detector, ocr_reader, model_type = load_models()
     
     if detector is None or ocr_reader is None:
         st.error("❌ Failed to load AI models. Please refresh the page.")
@@ -253,6 +290,13 @@ def main():
     4. **View** results with confidence scores
     """)
     
+    # Show current model status in sidebar
+    st.sidebar.markdown("## 🤖 Model Status")
+    if model_type == "custom":
+        st.sidebar.success("✅ **GTSRB Trained Model**\\nClassifies 43 traffic sign types")
+    else:
+        st.sidebar.warning("⚠️ **Generic YOLO Model**\\nDetection only, no classification")
+    
     # Main interface
     col1, col2 = st.columns([1, 1])
     
@@ -277,7 +321,7 @@ def main():
         
         if uploaded_file:
             with st.spinner("🔄 AI is analyzing your image... Please wait."):
-                results = process_uploaded_image(uploaded_file, detector, ocr_reader, confidence_threshold)
+                results = process_uploaded_image(uploaded_file, detector, ocr_reader, confidence_threshold, model_type)
             
             # Display metrics
             metric_col1, metric_col2, metric_col3 = st.columns(3)
@@ -314,6 +358,32 @@ def main():
         st.markdown("---")
         st.markdown("### 🎯 Detection Results")
         
+        # Show model status
+        if results.get('model_type') == "custom":
+            st.success("✅ **Using Trained GTSRB Model** - Will classify specific traffic signs (Stop, Speed Limit, etc.)")
+        else:
+            st.warning("⚠️ **Using Generic YOLO Model** - Shows bounding boxes only. Upload your trained model for sign classification!")
+            
+            with st.expander("📥 How to upload your trained model", expanded=False):
+                st.markdown("""
+                **To get traffic sign classification (Stop, Speed Limit 50km/h, etc.):**
+                
+                1. **Download from Google Colab:**
+                   ```python
+                   # Run this in your Colab notebook:
+                   from google.colab import files
+                   files.download('/content/runs/detect/train/weights/best.pt')
+                   ```
+                
+                2. **Add to your repository:**
+                   - Upload the downloaded `best.pt` file to your GitHub repository
+                   - Place it in the root directory alongside `app.py`
+                
+                3. **Redeploy:**
+                   - Streamlit will automatically use your trained model
+                   - You'll see actual sign classifications like "Stop", "No Entry", etc.
+                """)
+        
         # Show visualization
         fig = create_visualization(np.array(image), results)
         st.pyplot(fig, use_container_width=True)
@@ -330,6 +400,20 @@ def main():
                     st.markdown("**📍 Detection Info:**")
                     st.write(f"• Confidence: **{detection['confidence']:.3f}**")
                     st.write(f"• Location: `{detection['bbox']}`")
+                    
+                    # Show traffic sign classification if available
+                    if 'class_id' in detection and detection['class_id'] is not None:
+                        sign_meaning = get_sign_meaning(detection['class_id'])
+                        sign_category = get_sign_category(detection['class_id'])
+                        
+                        st.markdown(f"""
+                        <div style="background-color: #e7f3ff; border: 2px solid #2196F3; border-radius: 8px; padding: 0.75rem; margin: 0.5rem 0;">
+                        <h4 style="margin: 0; color: #1976D2;">🚦 {sign_meaning}</h4>
+                        <p style="margin: 0.25rem 0 0 0; color: #555; font-size: 0.9em;">Category: {sign_category}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.info("🤖 Generic traffic sign detected (using fallback model)")
                     
                     # Confidence indicator
                     if detection['confidence'] > 0.8:
