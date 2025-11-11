@@ -15,7 +15,20 @@ except:
 
 import matplotlib.pyplot as plt
 from PIL import Image
-import easyocr
+
+# Try to import EasyOCR with fallback to Tesseract
+try:
+    import easyocr
+    OCR_ENGINE = "easyocr"
+except ImportError as e:
+    st.warning(f"EasyOCR not available ({e}). Using Tesseract fallback.")
+    try:
+        import pytesseract
+        OCR_ENGINE = "tesseract" 
+    except ImportError:
+        st.error("No OCR engine available!")
+        st.stop()
+
 from ultralytics import YOLO
 import time
 
@@ -56,18 +69,42 @@ def load_models():
         try:
             # Try to load your custom trained YOLO model first
             try:
+                # Check if best.pt exists and get file info
+                import os
+                if os.path.exists('best.pt'):
+                    file_size = os.path.getsize('best.pt') / (1024*1024)  # MB
+                    st.info(f"📁 Found best.pt ({file_size:.1f} MB)")
+                    
                 detector = YOLO('best.pt')  # Your trained GTSRB model
-                st.success("✅ Custom GTSRB YOLO model loaded!")
+                
+                # Verify the model has the expected number of classes
+                model_classes = detector.model.names if hasattr(detector.model, 'names') else {}
+                num_classes = len(model_classes)
+                st.success(f"✅ Custom GTSRB YOLO model loaded! ({num_classes} classes)")
+                
+                # Show first few class names for verification
+                if model_classes:
+                    sample_classes = list(model_classes.values())[:5]
+                    st.info(f"📋 Sample classes: {', '.join(sample_classes)}")
+                
                 model_type = "custom"
-            except:
+            except Exception as e:
                 # Fallback to generic YOLO if custom model not found
+                st.error(f"❌ Failed to load best.pt: {str(e)}")
                 detector = YOLO('yolov8n.pt')
                 st.warning("⚠️ Using generic YOLO - Upload your trained 'best.pt' for sign classification")
                 model_type = "generic"
             
-            # Load OCR model (CPU only for Streamlit Cloud)
-            ocr_reader = easyocr.Reader(['en', 'de'], gpu=False)
-            st.success("✅ OCR model loaded!")
+            # Load OCR model based on available engine
+            if OCR_ENGINE == "easyocr":
+                ocr_reader = easyocr.Reader(['en', 'de'], gpu=False)
+                st.success("✅ EasyOCR model loaded!")
+            elif OCR_ENGINE == "tesseract":
+                ocr_reader = None  # Tesseract doesn't need pre-loading
+                st.success("✅ Tesseract OCR ready!")
+            else:
+                st.error("No OCR engine available!")
+                return None, None, None
             
             return detector, ocr_reader, model_type
             
@@ -146,28 +183,46 @@ def process_uploaded_image(uploaded_file, detector, ocr_reader, confidence_thres
                     # Extract ROI for OCR
                     roi = image_np[y1:y2, x1:x2]
                     
-                    # Perform OCR
+                    # Perform OCR based on available engine
                     ocr_results = []
                     if roi.size > 0:
                         try:
-                            # Preprocess ROI
-                            processed_roi = preprocess_for_ocr(roi)
+                            if OCR_ENGINE == "easyocr" and ocr_reader:
+                                # Preprocess ROI
+                                processed_roi = preprocess_for_ocr(roi)
+                                
+                                # Run OCR on both original and processed ROI
+                                raw_ocr = ocr_reader.readtext(roi, paragraph=False)
+                                processed_ocr = ocr_reader.readtext(processed_roi, paragraph=False)
+                                
+                                # Combine and filter results
+                                all_ocr = raw_ocr + processed_ocr
+                                seen_texts = set()
+                                
+                                for (bbox, text, conf) in all_ocr:
+                                    clean_text = text.strip()
+                                    if conf > 0.3 and clean_text and clean_text not in seen_texts:
+                                        ocr_results.append({
+                                            'text': clean_text,
+                                            'confidence': float(conf)
+                                        })
+                                        seen_texts.add(clean_text)
                             
-                            # Run OCR on both original and processed ROI
-                            raw_ocr = ocr_reader.readtext(roi, paragraph=False)
-                            processed_ocr = ocr_reader.readtext(processed_roi, paragraph=False)
-                            
-                            # Combine and filter results
-                            all_ocr = raw_ocr + processed_ocr
-                            seen_texts = set()
-                            
-                            for (bbox, text, conf) in all_ocr:
-                                clean_text = text.strip()
-                                if conf > 0.3 and clean_text and clean_text not in seen_texts:
-                                    ocr_results.append({
-                                        'text': clean_text,
-                                        'confidence': float(conf)
-                                    })
+                            elif OCR_ENGINE == "tesseract":
+                                # Use Tesseract OCR
+                                from PIL import Image
+                                roi_pil = Image.fromarray(roi)
+                                
+                                # OCR with confidence
+                                config = '--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+                                data = pytesseract.image_to_data(roi_pil, config=config, output_type=pytesseract.Output.DICT)
+                                
+                                for i, text in enumerate(data['text']):
+                                    if text.strip() and int(data['conf'][i]) > 30:
+                                        ocr_results.append({
+                                            'text': text.strip(),
+                                            'confidence': int(data['conf'][i]) / 100.0
+                                        })
                                     seen_texts.add(clean_text)
                             
                             # Sort by confidence
@@ -401,6 +456,11 @@ def main():
                     st.write(f"• Confidence: **{detection['confidence']:.3f}**")
                     st.write(f"• Location: `{detection['bbox']}`")
                     
+                    # Debug information
+                    st.markdown("**🔍 Debug Info:**")
+                    st.write(f"• Model Type: `{model_type}`")
+                    st.write(f"• Class ID: `{detection.get('class_id', 'N/A')}`")
+                    
                     # Show traffic sign classification if available
                     if 'class_id' in detection and detection['class_id'] is not None:
                         sign_meaning = get_sign_meaning(detection['class_id'])
@@ -412,8 +472,14 @@ def main():
                         <p style="margin: 0.25rem 0 0 0; color: #555; font-size: 0.9em;">Category: {sign_category}</p>
                         </div>
                         """, unsafe_allow_html=True)
+                        
+                        # Additional debug for GTSRB classes
+                        if model_type == "custom":
+                            st.success(f"✅ GTSRB Classification: Class {detection['class_id']} → {sign_meaning}")
+                        else:
+                            st.warning(f"⚠️ Generic Detection: Class {detection['class_id']} → {sign_meaning}")
                     else:
-                        st.info("🤖 Generic traffic sign detected (using fallback model)")
+                        st.info("🤖 No classification available")
                     
                     # Confidence indicator
                     if detection['confidence'] > 0.8:
