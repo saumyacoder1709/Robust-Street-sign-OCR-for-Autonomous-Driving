@@ -1,5 +1,18 @@
+# Force NumPy 1.x compatibility
+import os
+os.environ["NPY_NO_DEPRECATED_API"] = "NPY_1_7_API_VERSION"
+
 import streamlit as st
 import numpy as np
+
+# Check NumPy version compatibility
+try:
+    # Force numpy to use legacy mode if needed
+    if hasattr(np, '_NoValue'):
+        np._NoValue = np._globals._NoValue if hasattr(np, '_globals') else None
+except:
+    pass
+
 import matplotlib.pyplot as plt
 from PIL import Image
 import easyocr
