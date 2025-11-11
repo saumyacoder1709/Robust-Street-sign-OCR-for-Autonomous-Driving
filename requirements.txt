@@ -1,16 +1,22 @@
-# Core dependencies with exact versions for compatibility
-numpy==1.24.3
-opencv-python-headless==4.8.1.78
-scipy==1.10.1
-Pillow==10.0.1
-matplotlib==3.7.2
-protobuf==3.20.3
+# Build tools
+setuptools
+wheel
 
-# ML/AI packages
-torch==2.0.1 --index-url https://download.pytorch.org/whl/cpu
-torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cpu
+# Core ML dependencies (using compatible versions)
+numpy==1.26.4
+opencv-python-headless==4.9.0.80
+scipy==1.11.4
+Pillow==10.2.0
+matplotlib==3.8.2
+
+# OCR and ML packages
+easyocr==1.7.1
+torch==2.1.2
+torchvision==0.16.2
 ultralytics==8.0.196
-easyocr==1.7.0
 
 # Web framework
 streamlit==1.28.1
+
+# Additional compatibility packages
+protobuf==4.25.2
