@@ -1,22 +1,9 @@
-# Build tools
-setuptools
-wheel
-
-# Core ML dependencies (using compatible versions)
-numpy==1.26.4
-opencv-python-headless==4.9.0.80
-scipy==1.11.4
-Pillow==10.2.0
-matplotlib==3.8.2
-
-# OCR and ML packages
-easyocr==1.7.1
-torch==2.1.2
-torchvision==0.16.2
-ultralytics==8.0.196
-
-# Web framework
-streamlit==1.28.1
-
-# Additional compatibility packages
-protobuf==4.25.2
+streamlit
+torch
+torchvision
+ultralytics
+easyocr
+opencv-python-headless
+Pillow
+matplotlib
+numpy
