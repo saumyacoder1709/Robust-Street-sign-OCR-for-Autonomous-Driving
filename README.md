@@ -8,11 +8,6 @@ AI-powered traffic sign detection and text recognition system.
 - 🌐 Interactive web interface
 - 📊 Confidence scoring
 
-## Deployment
-1. Upload files to GitHub
-2. Deploy on Streamlit Cloud
-3. Share your public URL!
-
 ## Built With
 - Streamlit
 - YOLOv8
