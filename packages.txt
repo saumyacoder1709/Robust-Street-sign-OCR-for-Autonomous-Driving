@@ -6,3 +6,5 @@ libgomp1
 tesseract-ocr
 tesseract-ocr-eng
 tesseract-ocr-deu
+gfortran
+pkg-config
